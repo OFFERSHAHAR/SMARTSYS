@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Package, Gift, Send, Pencil, Check, ChevronRight, ScrollText,
-  Boxes, Scale, Bell, Plus, Minus, RotateCcw, Sparkles, Loader2, Inbox
+  Scale, Bell, Plus, Minus, RotateCcw, Sparkles, Loader2
 } from "lucide-react";
 
 /* ============================================================
@@ -10,6 +10,20 @@ import {
 
 const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : null;
 const INIT_DATA = tg?.initData || "";
+
+/* ---- מותג האריה ---- */
+const LION = {
+  wink: "/lion_wink.png",         // ברירת מחדל / לוגו על הבון
+  grin: "/lion_grin.png",         // מוכן לאיסוף / אישור
+  smile: "/lion_smile.png",       // יצירת בון
+  neutral: "/lion_neutral.png",   // עומד — כניסה / המתנה
+  celebrate: "/lion_celebrate.png", // יושב — חגיגה / ריק
+};
+const Lion = ({ src, size = 96, className = "", style = {} }) => (
+  <img src={src} alt="" width={size} height={size}
+    className={className}
+    style={{ width: size, height: size, objectFit: "contain", filter: "drop-shadow(0 6px 14px rgba(0,0,0,.35))", ...style }} />
+);
 
 async function api(path, body) {
   const r = await fetch("/api" + path, {
@@ -115,8 +129,8 @@ const Receipt = ({ o }) => {
       <div className="px-5 pt-5 pb-4" dir="rtl">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg grid place-items-center text-white" style={{ background: "linear-gradient(145deg,#1d1814,#3a342c)" }}>
-              <Boxes size={16} />
+            <div className="w-11 h-11 rounded-full grid place-items-center overflow-hidden" style={{ background: "linear-gradient(160deg,#2a2218,#0f0c08)", border: "2px solid #d8caae" }}>
+              <Lion src={LION.wink} size={40} style={{ filter: "none" }} />
             </div>
             <div>
               <div className="disp font-extrabold text-[15px] leading-none tracking-tight">מחסן</div>
@@ -327,10 +341,10 @@ export default function App() {
   }, []);
 
   if (phase === "loading")
-    return <Center><Loader2 size={34} className="spin text-[#FFB020]" /><div className="text-white/60 text-[14px]">טוען…</div></Center>;
+    return <Center><Lion src={LION.neutral} size={150} /><div className="flex items-center gap-2 text-white/60 text-[14px]"><Loader2 size={16} className="spin text-[#FFB020]" /> טוען…</div></Center>;
   if (phase === "denied")
     return <Center>
-      <div className="w-16 h-16 rounded-2xl grid place-items-center text-white/40" style={{ background: "rgba(255,255,255,.05)" }}><Boxes size={28} /></div>
+      <Lion src={LION.neutral} size={130} style={{ opacity: .85 }} />
       <div className="text-white font-bold text-[16px]">אין הרשאה</div>
       <div className="text-white/45 text-[13px] leading-relaxed max-w-[260px]">שלח <span className="mono">/iammanager</span> או <span className="mono">/iamwarehouse</span> לבוט כדי להירשם, ואז פתח שוב.</div>
     </Center>;
@@ -398,9 +412,12 @@ function Manager({ name, catalog, fire, toast }) {
 
       {stage === "menu" && (
         <div className="space-y-4">
-          <div dir="rtl" className="msgIn rounded-2xl px-4 py-4 text-white" style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.07)" }}>
-            <div className="disp font-extrabold text-[20px]">היי בוס 🦁</div>
-            <div className="text-white/55 text-[14px] mt-0.5">מה צריך היום ?</div>
+          <div dir="rtl" className="msgIn rounded-2xl px-4 py-4 text-white flex items-center gap-3" style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.07)" }}>
+            <Lion src={LION.smile} size={72} />
+            <div className="flex-1">
+              <div className="disp font-extrabold text-[20px]">היי בוס 🦁</div>
+              <div className="text-white/55 text-[14px] mt-0.5">מה צריך היום ?</div>
+            </div>
           </div>
           <div className="space-y-2.5">
             <BigBtn primary icon={<Package size={18} />} label="משיכת סחורה" sub="טקסט חופשי — מה למשוך מהמחסן" onClick={() => setStage("withdraw")} />
@@ -453,6 +470,7 @@ function Manager({ name, catalog, fire, toast }) {
 
       {stage === "done" && sent && (
         <div className="space-y-4">
+          <div className="flex justify-center"><Lion src={LION.grin} size={110} /></div>
           <div dir="rtl" className="msgIn flex items-center justify-center gap-2 py-3 rounded-2xl text-[#34d27b] font-bold text-[14px]"
                style={{ background: "rgba(52,210,123,.1)", border: "1px solid rgba(52,210,123,.25)" }}>
             <Check size={18} /> בון #{sent.no} נשלח למחסן
@@ -503,7 +521,7 @@ function Warehouse({ name, fire, toast }) {
 
       {orders !== null && pending.length === 0 && ready.length === 0 && (
         <div className="h-[60vh] flex flex-col items-center justify-center text-center gap-3" dir="rtl">
-          <div className="w-16 h-16 rounded-2xl grid place-items-center text-white/40" style={{ background: "rgba(255,255,255,.05)" }}><Inbox size={28} /></div>
+          <Lion src={LION.celebrate} size={150} />
           <div className="text-white/45 text-[14px] font-semibold">אין הזמנות</div>
         </div>
       )}
@@ -547,8 +565,8 @@ function Warehouse({ name, fire, toast }) {
 const Header = ({ title, right }) => (
   <div className="flex items-center justify-between mb-4" dir="rtl">
     <div className="flex items-center gap-2.5">
-      <div className="w-9 h-9 rounded-xl grid place-items-center text-white" style={{ background: "linear-gradient(145deg,#FFB020,#FF7A18)" }}>
-        <Boxes size={18} />
+      <div className="w-10 h-10 rounded-full grid place-items-center overflow-hidden" style={{ background: "linear-gradient(160deg,#FFB020,#FF7A18)" }}>
+        <Lion src={LION.wink} size={38} style={{ filter: "none" }} />
       </div>
       <div>
         <div className="disp text-white font-black text-[17px] leading-none">מחסן</div>

@@ -43,6 +43,26 @@ function appButton(text) {
   return { inline_keyboard: [[{ text, web_app: { url: PUBLIC_URL } }]] };
 }
 
+const LION_URL = {
+  smile: () => `${PUBLIC_URL}/lion_smile.png`,
+  grin: () => `${PUBLIC_URL}/lion_grin.png`,
+  wink: () => `${PUBLIC_URL}/lion_wink.png`,
+  neutral: () => `${PUBLIC_URL}/lion_neutral.png`,
+};
+
+// שולח תמונת אריה עם כיתוב; אם נכשל — נופל חזרה להודעת טקסט
+async function sendLion(chatId, photoUrl, caption, withButton) {
+  const body = { chat_id: chatId, photo: photoUrl, caption, parse_mode: "HTML" };
+  if (withButton) body.reply_markup = appButton("🦁 פתח מחסן");
+  const r = await tg("sendPhoto", body);
+  if (!r.ok) {
+    const t = { chat_id: chatId, text: caption };
+    if (withButton) t.reply_markup = appButton("🦁 פתח מחסן");
+    await tg("sendMessage", t);
+  }
+  return r;
+}
+
 /* ---------- אימות initData של טלגרם ---------- */
 function checkInitData(initData) {
   if (!initData || !BOT_TOKEN) return null;
@@ -106,11 +126,8 @@ app.post("/api/orders/create", async (req, res) => {
     const order = await gas("createOrder", { ...req.body.order, createdBy: a.user.first_name || "" });
     const cfg = await gas("getConfig");
     if (cfg.warehouseChatId) {
-      await tg("sendMessage", {
-        chat_id: cfg.warehouseChatId,
-        text: `📦 הזמנה חדשה #${order.orderNo}\nפתח את המחסן כדי לצפות ולאשר.`,
-        reply_markup: appButton("🦁 פתח מחסן"),
-      });
+      await sendLion(cfg.warehouseChatId, LION_URL.smile(),
+        `📦 <b>הזמנה חדשה #${order.orderNo}</b>\nפתח את המחסן כדי לצפות ולאשר.`, true);
     }
     res.json({ ok: true, order });
   } catch (e) { res.json({ ok: false, error: String(e) }); }
@@ -123,7 +140,8 @@ app.post("/api/orders/confirm", async (req, res) => {
     const order = await gas("confirmOrder", { orderNo: req.body.orderNo, confirmedBy: a.user.first_name || "" });
     const cfg = await gas("getConfig");
     if (cfg.managerChatId) {
-      await tg("sendMessage", { chat_id: cfg.managerChatId, text: `🎉 הזמנה #${order.orderNo} מוכנה לאיסוף!` });
+      await sendLion(cfg.managerChatId, LION_URL.grin(),
+        `🎉 <b>הזמנה #${order.orderNo} מוכנה לאיסוף!</b>`, false);
     }
     res.json({ ok: true, order });
   } catch (e) { res.json({ ok: false, error: String(e) }); }
@@ -136,11 +154,8 @@ app.post("/api/orders/edit", async (req, res) => {
     const order = await gas("editOrder", { orderNo: req.body.orderNo, fields: req.body.fields || {} });
     const cfg = await gas("getConfig");
     if (cfg.warehouseChatId) {
-      await tg("sendMessage", {
-        chat_id: cfg.warehouseChatId,
-        text: `🔄 הזמנה #${order.orderNo} עודכנה ע״י המנהל.`,
-        reply_markup: appButton("🦁 פתח מחסן"),
-      });
+      await sendLion(cfg.warehouseChatId, LION_URL.wink(),
+        `🔄 <b>הזמנה #${order.orderNo} עודכנה</b> ע״י המנהל.`, true);
     }
     res.json({ ok: true, order });
   } catch (e) { res.json({ ok: false, error: String(e) }); }
@@ -157,11 +172,8 @@ app.post("/tg/:secret", async (req, res) => {
       const chatId = msg.chat.id;
       const text = msg.text.trim();
       if (text.startsWith("/start")) {
-        await tg("sendMessage", {
-          chat_id: chatId,
-          text: "היי בוס 🦁\nברוך הבא לבוט המחסן.\nלפתיחה לחץ למטה 👇",
-          reply_markup: appButton("🦁 פתח מחסן"),
-        });
+        await sendLion(chatId, LION_URL.neutral(),
+          "היי בוס 🦁\nברוך הבא לבוט המחסן.\nלפתיחה לחץ למטה 👇", true);
       } else if (text.startsWith("/iammanager")) {
         await gas("setConfig", { key: "managerChatId", value: String(chatId) });
         await tg("sendMessage", { chat_id: chatId, text: `✅ הוגדרת כמנהל.\nchat id: ${chatId}` });
