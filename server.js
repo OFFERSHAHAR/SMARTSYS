@@ -162,29 +162,62 @@ app.post("/api/orders/edit", async (req, res) => {
 });
 
 /* ---------- Telegram webhook ---------- */
+function regReply(role, r) {
+  const who = role === "manager" ? "מנהל" : "מחסן";
+  switch (r.status) {
+    case "registered": return `✅ הוגדרת כ${who}.\nchat id: ${r.chatId}`;
+    case "replaced":   return `✅ הוחלף — הוגדרת כ${who}.\nchat id: ${r.chatId}`;
+    case "already_you":return `כבר רשום כ${who} ✓\nchat id: ${r.chatId}`;
+    case "locked":     return `🔒 תפקיד ה${who} כבר תפוס.\nכדי להחליף: פתח את המתג allowRegister בגיליון (TRUE) ושלח שוב.`;
+    case "bot_register_off": return `🚫 רישום דרך הבוט חסום.\nניהול התפקידים נעשה ידנית בגיליון.`;
+    default: return `שגיאת רישום.`;
+  }
+}
+
 app.post("/tg/:secret", async (req, res) => {
   if (req.params.secret !== SHARED_SECRET) return res.sendStatus(403);
   res.sendStatus(200); // ack מיד
   try {
     const u = req.body;
     const msg = u.message || u.edited_message;
-    if (msg && msg.text) {
-      const chatId = msg.chat.id;
-      const text = msg.text.trim();
-      if (text.startsWith("/start")) {
-        await sendLion(chatId, LION_URL.neutral(),
-          "היי בוס 🦁\nברוך הבא לבוט המחסן.\nלפתיחה לחץ למטה 👇", true);
-      } else if (text.startsWith("/iammanager")) {
-        await gas("setConfig", { key: "managerChatId", value: String(chatId) });
-        await tg("sendMessage", { chat_id: chatId, text: `✅ הוגדרת כמנהל.\nchat id: ${chatId}` });
-      } else if (text.startsWith("/iamwarehouse")) {
-        await gas("setConfig", { key: "warehouseChatId", value: String(chatId) });
-        await tg("sendMessage", { chat_id: chatId, text: `✅ הוגדרת כמחסן.\nchat id: ${chatId}` });
-      } else if (text.startsWith("/whoami")) {
-        await tg("sendMessage", { chat_id: chatId, text: `chat id: ${chatId}` });
+    if (!msg || !msg.text) return;
+    const chatId = msg.chat.id;
+    const text = msg.text.trim();
+    const cfg = await gas("getConfig");
+    const isManager = String(cfg.managerChatId) === String(chatId);
+
+    if (text.startsWith("/start")) {
+      await sendLion(chatId, LION_URL.neutral(),
+        "היי בוס 🦁\nברוך הבא לבוט המחסן.\nלפתיחה לחץ למטה 👇", true);
+
+    } else if (text.startsWith("/iammanager")) {
+      const r = await gas("registerRole", { role: "manager", chatId: String(chatId) });
+      await tg("sendMessage", { chat_id: chatId, text: regReply("manager", r) });
+
+    } else if (text.startsWith("/iamwarehouse")) {
+      const r = await gas("registerRole", { role: "warehouse", chatId: String(chatId) });
+      await tg("sendMessage", { chat_id: chatId, text: regReply("warehouse", r) });
+
+    } else if (text.startsWith("/status")) {
+      if (!isManager) { await tg("sendMessage", { chat_id: chatId, text: "❌ פקודה למנהל בלבד." }); return; }
+      await tg("sendMessage", { chat_id: chatId, text:
+        `מצב רישום:\nמנהל: ${cfg.managerChatId || "—"}\nמחסן: ${cfg.warehouseChatId || "—"}\nרישום דרך בוט: ${cfg.botRegister}\nמתג החלפה: ${cfg.allowRegister}` });
+
+    } else if (text.startsWith("/reset")) {
+      if (!isManager) { await tg("sendMessage", { chat_id: chatId, text: "❌ פקודה למנהל בלבד." }); return; }
+      const part = text.split(/\s+/)[1];
+      if (part === "manager" || part === "warehouse") {
+        await gas("resetRole", { role: part });
+        await tg("sendMessage", { chat_id: chatId, text: `♻️ תפקיד ${part} אופס. שלח /iam${part} מהחשבון החדש (אחרי פתיחת allowRegister=TRUE).` });
       } else {
-        await tg("sendMessage", { chat_id: chatId, text: "לפתיחת המחסן 👇", reply_markup: appButton("🦁 פתח מחסן") });
+        await tg("sendMessage", { chat_id: chatId, text: "שימוש: /reset manager  או  /reset warehouse" });
       }
+
+    } else if (text.startsWith("/whoami")) {
+      await tg("sendMessage", { chat_id: chatId, text: `chat id: ${chatId}` });
+
+    } else {
+      await tg("sendMessage", { chat_id: chatId, text: "לפתיחת המחסן 👇", reply_markup: appButton("🦁 פתח מחסן") });
     }
   } catch (e) { console.error("webhook error:", e); }
 });
