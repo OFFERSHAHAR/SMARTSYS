@@ -1,0 +1,92 @@
+{
+  "name": "Warehouse Bot (full)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "warehouse",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "002d101e-d4a1-4973-91ba-e290fe544812",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        360
+      ],
+      "webhookId": "cc1c1387-c928-4a4d-b3e3-c15ce2bfeb7a"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// ===== Warehouse Bot — full logic (Telegram bot + Mini App API) =====\n// כל ההגדרות כאן:\nconst GAS_URL    = \"https://script.google.com/macros/s/AKfycbyWbitZm_uLgVJ3T32c7rRYKogUpeO3lRJXeW7yvxNxwPfolnItm81pFXUWgo_Cugh_WA/exec\";\nconst SECRET     = \"5df5fb11434ea8be13b320ddd7d797d51d1473d43bd11a8f\";\nconst BOT_TOKEN  = \"8842770819:AAGX2uOJsrXbAoomle99LNu7q6Qtj4k0UKM\";\n// כתובת ה-Mini App (Render static) — לכפתורים ולתמונות האריה:\nconst MINIAPP_URL = ($env && $env.MINIAPP_URL) || \"https://smartsys.onrender.com\";\n\nconst TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;\nconst crypto = require(\"crypto\");\nconst http = (opts) => this.helpers.httpRequest(opts);\n\nconst LION = {\n  smile:   `${MINIAPP_URL}/lion_smile.png`,\n  grin:    `${MINIAPP_URL}/lion_grin.png`,\n  wink:    `${MINIAPP_URL}/lion_wink.png`,\n  neutral: `${MINIAPP_URL}/lion_neutral.png`,\n};\n\nconst gas = async (action, payload) => {\n  const res = await http({ method:\"POST\", url:GAS_URL,\n    body:{ secret:SECRET, action, payload: payload||{} }, json:true });\n  if (!res || !res.ok) throw new Error((res && res.error) || \"gas error\");\n  return res.data;\n};\nconst tg = (method, payload) =>\n  http({ method:\"POST\", url:`${TG_API}/${method}`, body:payload, json:true });\n\nconst appButton = () => ({ inline_keyboard: [[{ text:\"🦁 פתח מחסן\", web_app:{ url: MINIAPP_URL } }]] });\nconst sendText = (chat_id, text, btn) =>\n  tg(\"sendMessage\", { chat_id, text, ...(btn ? { reply_markup: appButton() } : {}) });\nconst sendPhoto = async (chat_id, photo, caption, btn) => {\n  try { return await tg(\"sendPhoto\", { chat_id, photo, caption, parse_mode:\"HTML\",\n    ...(btn ? { reply_markup: appButton() } : {}) }); }\n  catch (e) { return sendText(chat_id, caption, btn); }\n};\n\nconst checkInitData = (initData) => {\n  if (!initData) return null;\n  const p = new URLSearchParams(initData);\n  const hash = p.get(\"hash\"); if (!hash) return null;\n  p.delete(\"hash\");\n  const dcs = [...p.entries()].map(([k,v]) => `${k}=${v}`).sort().join(\"\\n\");\n  const sk = crypto.createHmac(\"sha256\",\"WebAppData\").update(BOT_TOKEN).digest();\n  const calc = crypto.createHmac(\"sha256\", sk).update(dcs).digest(\"hex\");\n  if (calc !== hash) return null;\n  try { return JSON.parse(p.get(\"user\")||\"null\"); } catch { return null; }\n};\nconst roleOf = async (user) => {\n  if (!user) return null;\n  const cfg = await gas(\"getConfig\");\n  const id = String(user.id);\n  if (String(cfg.managerChatId) === id) return \"manager\";\n  if (String(cfg.warehouseChatId) === id) return \"warehouse\";\n  return null;\n};\nconst regReply = (role, r) => {\n  const who = role === \"manager\" ? \"מנהל\" : \"מחסן\";\n  switch (r.status) {\n    case \"registered\":  return `✅ הוגדרת כ${who}.\\nchat id: ${r.chatId}`;\n    case \"replaced\":    return `✅ הוחלף — הוגדרת כ${who}.\\nchat id: ${r.chatId}`;\n    case \"already_you\": return `כבר רשום כ${who} ✓\\nchat id: ${r.chatId}`;\n    case \"locked\":      return `🔒 תפקיד ה${who} כבר תפוס.\\nכדי להחליף: פתח allowRegister=TRUE בגיליון ושלח שוב.`;\n    case \"bot_register_off\": return `🚫 רישום דרך הבוט חסום. ניהול ידני בגיליון.`;\n    default: return \"שגיאת רישום.\";\n  }\n};\n\nconst reply = (obj) => [{ json: { responseBody: obj } }];\n\nconst inItem  = $input.first().json;\nconst body    = inItem.body || {};\nconst headers = inItem.headers || {};\n\n// =================== TELEGRAM ===================\nif (body.update_id !== undefined) {\n  const msg = body.message || body.edited_message;\n  if (msg && msg.text) {\n    const chatId = msg.chat.id;\n    const text = msg.text.trim();\n    const cfg = await gas(\"getConfig\");\n    const isManager = String(cfg.managerChatId) === String(chatId);\n\n    if (text.startsWith(\"/start\")) {\n      await sendPhoto(chatId, LION.neutral, \"היי בוס 🦁\\nברוך הבא לבוט המחסן.\\nלפתיחה לחץ למטה 👇\", true);\n    } else if (text.startsWith(\"/iammanager\")) {\n      const r = await gas(\"registerRole\", { role:\"manager\", chatId:String(chatId) });\n      await sendText(chatId, regReply(\"manager\", r));\n    } else if (text.startsWith(\"/iamwarehouse\")) {\n      const r = await gas(\"registerRole\", { role:\"warehouse\", chatId:String(chatId) });\n      await sendText(chatId, regReply(\"warehouse\", r));\n    } else if (text.startsWith(\"/status\")) {\n      if (!isManager) { await sendText(chatId, \"❌ פקודה למנהל בלבד.\"); }\n      else await sendText(chatId, `מצב רישום:\\nמנהל: ${cfg.managerChatId||\"—\"}\\nמחסן: ${cfg.warehouseChatId||\"—\"}\\nרישום בוט: ${cfg.botRegister}\\nמתג החלפה: ${cfg.allowRegister}`);\n    } else if (text.startsWith(\"/reset\")) {\n      if (!isManager) { await sendText(chatId, \"❌ פקודה למנהל בלבד.\"); }\n      else {\n        const part = text.split(/\\s+/)[1];\n        if (part === \"manager\" || part === \"warehouse\") {\n          await gas(\"resetRole\", { role: part });\n          await sendText(chatId, `♻️ תפקיד ${part} אופס. פתח allowRegister=TRUE ושלח /iam${part} מהחשבון החדש.`);\n        } else await sendText(chatId, \"שימוש: /reset manager  או  /reset warehouse\");\n      }\n    } else if (text.startsWith(\"/whoami\")) {\n      await sendText(chatId, `chat id: ${chatId}`);\n    } else {\n      await sendText(chatId, \"לפתיחת המחסן 👇\", true);\n    }\n  }\n  return reply({ ok:true });\n}\n\n// =================== MINI APP API ===================\n// הבקשה מהאפליקציה: { action, payload, initData }  (או X-Init-Data בכותרת)\nconst action   = (body.action || \"\").toString();\nconst payload  = body.payload || {};\nconst initData = headers[\"x-init-data\"] || body.initData || \"\";\n\nif (action === \"catalog\") {\n  const data = await gas(\"getCatalog\");\n  return reply({ ok:true, products:data.products, packTypes:data.packTypes });\n}\n\nconst user = checkInitData(initData);\nif (!user) return reply({ ok:false, error:\"unauthorized\" });\nconst role = await roleOf(user);\nif (!role) return reply({ ok:false, error:\"unauthorized\" });\n\nif (action === \"me\")\n  return reply({ ok:true, role, name: user.first_name || \"\" });\n\nif (action === \"listOrders\") {\n  const orders = await gas(\"listOrders\", { status: payload.status || \"\" });\n  return reply({ ok:true, orders });\n}\n\nif (action === \"createOrder\") {\n  if (role !== \"manager\") return reply({ ok:false, error:\"unauthorized\" });\n  const order = await gas(\"createOrder\", { ...payload.order, createdBy: user.first_name || \"\" });\n  const cfg = await gas(\"getConfig\");\n  if (cfg.warehouseChatId)\n    await sendPhoto(cfg.warehouseChatId, LION.smile, `📦 <b>הזמנה חדשה #${order.orderNo}</b>\\nפתח את המחסן כדי לצפות ולאשר.`, true);\n  return reply({ ok:true, order });\n}\n\nif (action === \"confirmOrder\") {\n  if (role !== \"warehouse\") return reply({ ok:false, error:\"unauthorized\" });\n  const order = await gas(\"confirmOrder\", { orderNo: payload.orderNo, confirmedBy: user.first_name || \"\" });\n  const cfg = await gas(\"getConfig\");\n  if (cfg.managerChatId)\n    await sendPhoto(cfg.managerChatId, LION.grin, `🎉 <b>הזמנה #${order.orderNo} מוכנה לאיסוף!</b>`, false);\n  return reply({ ok:true, order });\n}\n\nif (action === \"editOrder\") {\n  if (role !== \"manager\") return reply({ ok:false, error:\"unauthorized\" });\n  const order = await gas(\"editOrder\", { orderNo: payload.orderNo, fields: payload.fields || {} });\n  const cfg = await gas(\"getConfig\");\n  if (cfg.warehouseChatId)\n    await sendPhoto(cfg.warehouseChatId, LION.wink, `🔄 <b>הזמנה #${order.orderNo} עודכנה</b> ע״י המנהל.`, true);\n  return reply({ ok:true, order });\n}\n\nreturn reply({ ok:false, error:\"unknown action: \" + action });\n"
+      },
+      "id": "c221281e-5b56-4b8a-afe7-afccadb6c5bf",
+      "name": "Bot Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.responseBody || { ok: true }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "03fe5939-0e95-49a7-b272-b9134989a1eb",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        780,
+        360
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Bot Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bot Logic": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateId": "warehouse-bot-full"
+  }
+}

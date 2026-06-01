@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Package, Gift, Send, Pencil, Check, ChevronRight, ScrollText,
-  Scale, Bell, Plus, Minus, RotateCcw, Sparkles, Loader2
+  Scale, Bell, Plus, Minus, RotateCcw, Sparkles, Loader2, PackagePlus, Boxes
 } from "lucide-react";
 
 /* ============================================================
@@ -57,8 +57,11 @@ function normalize(o) {
     packages: o.packages,
     packType: o.packType,
     packWeight: o.packWeight,
+    drawWeight: o.drawWeight,
     text: o.freeText,
     status: o.status,
+    receivedBy: o.receivedBy,
+    confirmedBy: o.confirmedBy,
     edited: Number(o.version || 1) > 1,
   };
 }
@@ -158,6 +161,7 @@ const Receipt = ({ o }) => {
             <Row label="אריזות למילוי" value={`${o.packages}`} />
             <Row label="סוג אריזה" value={o.packType} strong />
             <Row label="משקל אריזה" value={`${fmt(o.packWeight)} גרם`} />
+            {o.drawWeight ? <Row label="משקל סחורה" value={`${fmt(o.drawWeight)} גרם`} /> : null}
           </>
         ) : (
           <div className="rounded-xl p-3 text-[14px] leading-relaxed text-[#3a342c]" style={{ background: "rgba(0,0,0,.045)", border: "1px dashed #d8caae" }}>
@@ -175,10 +179,12 @@ const Receipt = ({ o }) => {
         </div>
 
         <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold"
-             style={{ color: o.status === "ready" ? "#1c9a55" : "#b07a14" }}>
+             style={{ color: o.status === "ready" ? "#1c9a55" : o.status === "received" ? "#2563c9" : "#b07a14" }}>
           {o.status === "ready"
             ? <><Check size={13} /> מוכן לאיסוף ✓</>
-            : <><Bell size={12} /> ממתין לאישור איסוף</>}
+            : o.status === "received"
+              ? <><Check size={12} /> התקבל — בטיפול</>
+              : <><Bell size={12} /> ממתין לקבלה</>}
         </div>
       </div>
       <div className="scallop scallop-b" />
@@ -225,7 +231,7 @@ const Chip = ({ active, onClick, children }) => (
 );
 
 const PackForm = ({ catalog, state, set, onSubmit, editing }) => {
-  const valid = state.product && state.qty > 0 && state.packages > 0 && state.packType && state.packWeight > 0;
+  const valid = state.product && state.qty > 0 && state.packages > 0 && state.packType && state.packWeight > 0 && state.drawWeight > 0;
   return (
     <div dir="rtl" className="msgIn rounded-2xl p-4 space-y-4"
          style={{ background: "rgba(255,255,255,.045)", border: "1px solid rgba(255,255,255,.08)" }}>
@@ -282,6 +288,18 @@ const PackForm = ({ catalog, state, set, onSubmit, editing }) => {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="flex items-center justify-between rounded-xl px-3 py-2.5"
+           style={{ background: "rgba(255,255,255,.04)", border: "1px solid var(--line, rgba(255,255,255,.1))" }}>
+        <div className="text-white/70 text-[12px] font-semibold flex items-center gap-1.5"><Scale size={14} className="text-[#FFB020]" /> משקל סחורה שנמשך (גרם)</div>
+        <div className="flex items-center gap-2">
+          <input type="number" inputMode="decimal" value={state.drawWeight || ""}
+            onChange={(e) => set({ ...state, drawWeight: Number(e.target.value) })}
+            placeholder="0"
+            className="mono w-20 bg-transparent outline-none text-white text-[16px] font-bold text-center border-b border-white/20 focus:border-[#FFB020]" />
+          <span className="text-white/40 text-[12px]">g</span>
+        </div>
       </div>
 
       <button disabled={!valid} onClick={onSubmit}
@@ -361,18 +379,23 @@ export default function App() {
 
 /* ---------------- Manager ---------------- */
 function Manager({ name, catalog, fire, toast }) {
-  const [stage, setStage] = useState("menu"); // menu | withdraw | packform | preview | done
+  const [stage, setStage] = useState("menu"); // menu | withdraw | packform | preview | done | deposit | stock
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const [form, setForm] = useState({ product: null, qty: 10, packages: 4, packType: null, packMode: null, packWeight: 0 });
-  const [preview, setPreview] = useState(null); // normalized, pre-send
-  const [sent, setSent] = useState(null);        // normalized, post-send
+  const [form, setForm] = useState({ product: null, qty: 10, packages: 4, packType: null, packMode: null, packWeight: 0, drawWeight: 0 });
+  const [preview, setPreview] = useState(null);
+  const [sent, setSent] = useState(null);
   const [busy, setBusy] = useState(false);
+  // deposit
+  const [depProduct, setDepProduct] = useState(null);
+  const [depGrams, setDepGrams] = useState(0);
+  // inventory
+  const [inv, setInv] = useState(null);
 
   const reset = () => {
     setStage("menu"); setEditing(false); setDraft("");
-    setForm({ product: null, qty: 10, packages: 4, packType: null, packMode: null, packWeight: 0 });
-    setPreview(null); setSent(null);
+    setForm({ product: null, qty: 10, packages: 4, packType: null, packMode: null, packWeight: 0, drawWeight: 0 });
+    setPreview(null); setSent(null); setDepProduct(null); setDepGrams(0);
   };
 
   const buildPreview = (o) => {
@@ -388,7 +411,7 @@ function Manager({ name, catalog, fire, toast }) {
   const goPackPreview = () => {
     setPreview(buildPreview({
       type: "pack", product: form.product, qty: form.qty, packages: form.packages,
-      packType: form.packType, packWeight: form.packWeight,
+      packType: form.packType, packWeight: form.packWeight, drawWeight: form.drawWeight,
     }));
     setStage("preview");
   };
@@ -396,13 +419,30 @@ function Manager({ name, catalog, fire, toast }) {
   const send = async () => {
     setBusy(true);
     const order = preview.type === "pack"
-      ? { type: "pack", product: preview.product, qty: preview.qty, packages: preview.packages, packType: preview.packType, packWeight: preview.packWeight }
+      ? { type: "pack", product: preview.product, qty: preview.qty, packages: preview.packages, packType: preview.packType, packWeight: preview.packWeight, drawWeight: preview.drawWeight }
       : { type: "withdraw", freeText: preview.text };
     const res = await api("/orders/create", { order });
     setBusy(false);
     if (!res.ok) { fire("שגיאה בשליחה"); return; }
     setSent(normalize(res.order)); setStage("done"); fire("נשלח למחסן ✓");
     tg?.HapticFeedback?.notificationOccurred?.("success");
+  };
+
+  const doDeposit = async () => {
+    if (!depProduct || depGrams <= 0) return;
+    setBusy(true);
+    const res = await api("/deposit", { product: depProduct, grams: depGrams });
+    setBusy(false);
+    if (!res.ok) { fire("שגיאה בהפקדה"); return; }
+    fire(`הופקד ✓ ${depProduct}: ${res.result.grams} גרם`);
+    tg?.HapticFeedback?.notificationOccurred?.("success");
+    setDepProduct(null); setDepGrams(0); setStage("menu");
+  };
+
+  const loadInv = async () => {
+    setStage("stock"); setInv(null);
+    const res = await api("/inventory", {});
+    setInv(res.ok ? res.inventory : []);
   };
 
   return (
@@ -421,7 +461,9 @@ function Manager({ name, catalog, fire, toast }) {
           </div>
           <div className="space-y-2.5">
             <BigBtn primary icon={<Package size={18} />} label="משיכת סחורה" sub="טקסט חופשי — מה למשוך מהמחסן" onClick={() => setStage("withdraw")} />
-            <BigBtn icon={<Gift size={18} />} label="אריזה" sub="מוצר · כמות · אריזות · סוג" onClick={() => setStage("packform")} />
+            <BigBtn icon={<Gift size={18} />} label="אריזה" sub="מוצר · כמות · אריזות · משקל" onClick={() => setStage("packform")} />
+            <BigBtn icon={<PackagePlus size={18} />} label="הפקדת סחורה" sub="הוסף משקל למלאי לפי מוצר" onClick={() => setStage("deposit")} />
+            <BigBtn icon={<Boxes size={18} />} label="מלאי נוכחי" sub="כמה יש מכל סוג במחסן" onClick={loadInv} />
           </div>
         </div>
       )}
@@ -431,7 +473,7 @@ function Manager({ name, catalog, fire, toast }) {
           <Back onClick={reset} />
           <div className="text-white/55 text-[13px] font-semibold">פרט מה למשוך מהמחסן:</div>
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={5}
-            placeholder="לדוגמה: 3 ארגזי מוצר 2, חבית שמן, 5 שקיות..."
+            placeholder="לדוגמה: 3 ארגזי מוצר B, חבית שמן, 5 שקיות..."
             className="w-full rounded-2xl p-4 text-white text-[15px] outline-none resize-none"
             style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)" }} />
           <button disabled={!draft.trim()} onClick={goWithdrawPreview}
@@ -446,6 +488,58 @@ function Manager({ name, catalog, fire, toast }) {
         <div className="space-y-3">
           <Back onClick={reset} />
           <PackForm catalog={catalog} state={form} set={setForm} editing={editing} onSubmit={goPackPreview} />
+        </div>
+      )}
+
+      {stage === "deposit" && (
+        <div className="space-y-4" dir="rtl">
+          <Back onClick={reset} />
+          <div className="msgIn rounded-2xl p-4 space-y-4" style={{ background: "rgba(255,255,255,.045)", border: "1px solid rgba(255,255,255,.08)" }}>
+            <div className="flex items-center gap-1.5 text-white font-extrabold text-[14px] disp"><PackagePlus size={16} className="text-[#FFB020]" /> הפקדת סחורה למלאי</div>
+            <div>
+              <div className="text-white/55 text-[12px] mb-2 font-semibold">סוג מוצר</div>
+              <div className="flex gap-2 overflow-x-auto scrl pb-1">
+                {catalog.products.map((p) => (
+                  <Chip key={p.name} active={depProduct === p.name} onClick={() => setDepProduct(p.name)}>{p.name}</Chip>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-xl px-3 py-2.5" style={{ background: "rgba(255,176,32,.08)", border: "1px solid rgba(255,176,32,.25)" }}>
+              <div className="text-[#FFB020] text-[12px] font-semibold flex items-center gap-1.5"><Scale size={14} /> משקל להוספה (גרם)</div>
+              <div className="flex items-center gap-2">
+                <input type="number" inputMode="decimal" value={depGrams || ""} onChange={(e) => setDepGrams(Number(e.target.value))} placeholder="0"
+                  className="mono w-24 bg-transparent outline-none text-white text-[16px] font-bold text-center border-b border-white/20 focus:border-[#FFB020]" />
+                <span className="text-white/40 text-[12px]">g</span>
+              </div>
+            </div>
+            <button disabled={!depProduct || depGrams <= 0 || busy} onClick={doDeposit}
+              className="press w-full py-3 rounded-xl font-extrabold text-[15px] disp flex items-center justify-center gap-2"
+              style={(depProduct && depGrams > 0) ? { background: "linear-gradient(145deg,#FFB020,#FF7A18)", color: "#231505" } : { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.3)" }}>
+              {busy ? <Loader2 size={16} className="spin" /> : <PackagePlus size={17} />} הפקד למלאי
+            </button>
+          </div>
+        </div>
+      )}
+
+      {stage === "stock" && (
+        <div className="space-y-3" dir="rtl">
+          <Back onClick={reset} />
+          <div className="text-white font-extrabold text-[16px] disp flex items-center gap-1.5"><Boxes size={18} className="text-[#FFB020]" /> מלאי נוכחי</div>
+          {inv === null ? (
+            <div className="h-[40vh] flex items-center justify-center"><Loader2 size={28} className="spin text-[#FFB020]" /></div>
+          ) : inv.length === 0 ? (
+            <div className="text-white/45 text-[14px]">אין נתוני מלאי.</div>
+          ) : (
+            <div className="space-y-2">
+              {inv.map((it) => (
+                <div key={it.product} className="flex items-center gap-3 px-4 py-3 rounded-2xl" style={{ background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)" }}>
+                  <div className="w-9 h-9 rounded-xl grid place-items-center font-black text-[#231505] disp" style={{ background: "linear-gradient(145deg,#FFB020,#FF7A18)" }}>{it.product}</div>
+                  <div className="flex-1 text-white font-semibold">מוצר {it.product}</div>
+                  <div className="mono text-white font-bold text-[15px]">{Number(it.grams).toLocaleString()} <span className="text-white/40 text-[12px]">g</span></div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -476,7 +570,7 @@ function Manager({ name, catalog, fire, toast }) {
             <Check size={18} /> בון #{sent.no} נשלח למחסן
           </div>
           <Receipt o={sent} />
-          <BigBtn primary icon={<Plus size={18} />} label="בון חדש" sub="צור משיכה או אריזה נוספת" onClick={reset} />
+          <BigBtn primary icon={<Plus size={18} />} label="פעולה נוספת" sub="חזרה לתפריט" onClick={reset} />
         </div>
       )}
     </Shell>
@@ -487,28 +581,69 @@ function Manager({ name, catalog, fire, toast }) {
 function Warehouse({ name, fire, toast }) {
   const [orders, setOrders] = useState(null);
   const [busyNo, setBusyNo] = useState(null);
+  const [editNo, setEditNo] = useState(null);
+  const [editFields, setEditFields] = useState({ qty: 0, drawWeight: 0 });
 
   const load = useCallback(async () => {
     const res = await api("/orders/list", {});
     if (res.ok) {
-      const list = (res.orders || []).map(normalize)
-        .sort((a, b) => Number(b.orderNo) - Number(a.orderNo));
+      const list = (res.orders || []).map(normalize).sort((a, b) => Number(b.orderNo) - Number(a.orderNo));
       setOrders(list);
     } else setOrders([]);
   }, []);
 
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
 
+  const receive = async (no) => {
+    setBusyNo(no);
+    const res = await api("/orders/receive", { orderNo: no });
+    setBusyNo(null);
+    if (res.ok) { fire("התקבל ✓"); tg?.HapticFeedback?.impactOccurred?.("medium"); load(); }
+    else fire("שגיאה");
+  };
+
   const confirm = async (no) => {
     setBusyNo(no);
     const res = await api("/orders/confirm", { orderNo: no });
     setBusyNo(null);
-    if (res.ok) { fire("סומן מוכן לאיסוף 🎉"); tg?.HapticFeedback?.notificationOccurred?.("success"); load(); }
+    if (res.ok) { fire("מוכן לאיסוף 🎉 · מלאי עודכן"); tg?.HapticFeedback?.notificationOccurred?.("success"); load(); }
     else fire("שגיאה");
   };
 
-  const pending = (orders || []).filter((o) => o.status === "sent");
-  const ready = (orders || []).filter((o) => o.status === "ready");
+  const openEdit = (o) => { setEditNo(o.orderNo); setEditFields({ qty: Number(o.qty) || 0, drawWeight: Number(o.drawWeight) || 0 }); };
+  const saveEdit = async (no) => {
+    setBusyNo(no);
+    const res = await api("/orders/setqty", { orderNo: no, fields: { qty: editFields.qty, drawWeight: editFields.drawWeight } });
+    setBusyNo(null); setEditNo(null);
+    if (res.ok) { fire("כמות עודכנה ✓"); load(); }
+    else fire("שגיאה");
+  };
+
+  const pending  = (orders || []).filter((o) => o.status === "sent");
+  const received = (orders || []).filter((o) => o.status === "received");
+  const ready    = (orders || []).filter((o) => o.status === "ready");
+
+  const editBox = (o) => (
+    <div dir="rtl" className="msgIn rounded-xl p-3 space-y-3" style={{ background: "rgba(255,176,32,.08)", border: "1px solid rgba(255,176,32,.25)" }}>
+      <div className="text-[#FFB020] text-[12px] font-bold flex items-center gap-1.5"><Pencil size={13} /> תיקון בעת חוסר</div>
+      <div className="flex items-center justify-between">
+        <span className="text-white/60 text-[12px]">כמות בפועל</span>
+        <Stepper value={editFields.qty} set={(v) => setEditFields((f) => ({ ...f, qty: v }))} min={0} />
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-white/60 text-[12px]">משקל סחורה (גרם)</span>
+        <div className="flex items-center gap-2">
+          <input type="number" inputMode="decimal" value={editFields.drawWeight || ""} onChange={(e) => setEditFields((f) => ({ ...f, drawWeight: Number(e.target.value) }))}
+            className="mono w-20 bg-transparent outline-none text-white text-[15px] font-bold text-center border-b border-white/20 focus:border-[#FFB020]" />
+          <span className="text-white/40 text-[12px]">g</span>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={() => saveEdit(o.orderNo)} className="press flex-1 py-2 rounded-lg font-bold text-[13px]" style={{ background: "linear-gradient(145deg,#FFB020,#FF7A18)", color: "#231505" }}>שמור</button>
+        <button onClick={() => setEditNo(null)} className="press px-4 py-2 rounded-lg font-bold text-[13px] text-white" style={{ background: "rgba(255,255,255,.08)" }}>ביטול</button>
+      </div>
+    </div>
+  );
 
   return (
     <Shell>
@@ -519,29 +654,58 @@ function Warehouse({ name, fire, toast }) {
         <div className="h-[60vh] flex items-center justify-center"><Loader2 size={30} className="spin text-[#FFB020]" /></div>
       )}
 
-      {orders !== null && pending.length === 0 && ready.length === 0 && (
+      {orders !== null && pending.length === 0 && received.length === 0 && ready.length === 0 && (
         <div className="h-[60vh] flex flex-col items-center justify-center text-center gap-3" dir="rtl">
           <Lion src={LION.celebrate} size={150} />
           <div className="text-white/45 text-[14px] font-semibold">אין הזמנות</div>
         </div>
       )}
 
+      {/* שלב 1 — חדשות, ממתינות לקבלה */}
       {pending.length > 0 && (
         <div className="space-y-4">
-          <div className="text-white/55 text-[13px] font-bold flex items-center gap-1.5" dir="rtl"><Bell size={14} className="text-[#FFB020]" /> ממתינות לאיסוף ({pending.length})</div>
+          <div className="text-white/55 text-[13px] font-bold flex items-center gap-1.5" dir="rtl"><Bell size={14} className="text-[#FFB020]" /> חדשות — ממתינות לקבלה ({pending.length})</div>
           {pending.map((o) => (
             <div key={o.orderNo} className="space-y-2">
               <Receipt o={o} />
-              <button disabled={busyNo === o.orderNo} onClick={() => confirm(o.orderNo)}
+              <button disabled={busyNo === o.orderNo} onClick={() => receive(o.orderNo)}
                 className="press w-full py-3 rounded-xl font-extrabold text-[15px] disp flex items-center justify-center gap-2"
                 style={{ background: "linear-gradient(145deg,#FFB020,#FF7A18)", color: "#231505", boxShadow: "0 10px 26px -10px rgba(255,140,20,.6)" }}>
-                {busyNo === o.orderNo ? <Loader2 size={16} className="spin" /> : <Check size={17} />} הזמנה מוכנה לאיסוף
+                {busyNo === o.orderNo ? <Loader2 size={16} className="spin" /> : <Check size={17} />} קיבלתי
               </button>
             </div>
           ))}
         </div>
       )}
 
+      {/* שלב 2 — בטיפול, אפשר לתקן כמות ולאשר סופית */}
+      {received.length > 0 && (
+        <div className="space-y-4 mt-6">
+          <div className="text-white/55 text-[13px] font-bold flex items-center gap-1.5" dir="rtl"><Package size={14} className="text-[#2563c9]" /> בטיפול ({received.length})</div>
+          {received.map((o) => (
+            <div key={o.orderNo} className="space-y-2">
+              <Receipt o={o} />
+              {editNo === o.orderNo ? editBox(o) : (
+                <div className="flex gap-2">
+                  <button disabled={busyNo === o.orderNo} onClick={() => confirm(o.orderNo)}
+                    className="press flex-1 py-3 rounded-xl font-extrabold text-[15px] disp flex items-center justify-center gap-2"
+                    style={{ background: "linear-gradient(145deg,#34d27b,#1c9a55)", color: "#06240f", boxShadow: "0 10px 26px -10px rgba(52,210,123,.5)" }}>
+                    {busyNo === o.orderNo ? <Loader2 size={16} className="spin" /> : <Check size={17} />} מוכן לאיסוף
+                  </button>
+                  {o.type === "pack" && (
+                    <button onClick={() => openEdit(o)} className="press px-4 py-3 rounded-xl font-bold text-[14px] text-white flex items-center gap-1.5"
+                      style={{ background: "rgba(255,255,255,.07)", border: "1px solid rgba(255,255,255,.1)" }}>
+                      <Pencil size={15} /> חוסר
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* מוכנות */}
       {ready.length > 0 && (
         <div className="space-y-3 mt-6">
           <div className="text-white/40 text-[12px] font-bold" dir="rtl">מוכנות ({ready.length})</div>
@@ -549,9 +713,7 @@ function Warehouse({ name, fire, toast }) {
             <div key={o.orderNo} dir="rtl" className="flex items-center gap-3 px-4 py-3 rounded-2xl"
                  style={{ background: "rgba(52,210,123,.07)", border: "1px solid rgba(52,210,123,.2)" }}>
               <Check size={18} className="text-[#34d27b]" />
-              <div className="flex-1 text-white text-[14px] font-semibold">
-                בון #{o.no} · {o.type === "pack" ? o.product : "משיכה"}
-              </div>
+              <div className="flex-1 text-white text-[14px] font-semibold">בון #{o.no} · {o.type === "pack" ? o.product : "משיכה"}</div>
               <span className="text-[#34d27b] text-[12px] font-bold">מוכן</span>
             </div>
           ))}

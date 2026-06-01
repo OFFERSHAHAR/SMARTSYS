@@ -119,6 +119,24 @@ app.post("/api/orders/list", async (req, res) => {
   } catch (e) { res.json({ ok: false, error: String(e) }); }
 });
 
+app.post("/api/inventory", async (req, res) => {
+  try {
+    const a = await auth(req);
+    if (!a) return res.json({ ok: false, error: "unauthorized" });
+    const inventory = await gas("getInventory");
+    res.json({ ok: true, inventory });
+  } catch (e) { res.json({ ok: false, error: String(e) }); }
+});
+
+app.post("/api/deposit", async (req, res) => {
+  try {
+    const a = await auth(req);
+    if (!a || a.role !== "manager") return res.json({ ok: false, error: "unauthorized" });
+    const r = await gas("deposit", { product: req.body.product, grams: req.body.grams, by: a.user.first_name || "" });
+    res.json({ ok: true, result: r });
+  } catch (e) { res.json({ ok: false, error: String(e) }); }
+});
+
 app.post("/api/orders/create", async (req, res) => {
   try {
     const a = await auth(req);
@@ -127,12 +145,43 @@ app.post("/api/orders/create", async (req, res) => {
     const cfg = await gas("getConfig");
     if (cfg.warehouseChatId) {
       await sendLion(cfg.warehouseChatId, LION_URL.smile(),
-        `📦 <b>הזמנה חדשה #${order.orderNo}</b>\nפתח את המחסן כדי לצפות ולאשר.`, true);
+        `📦 <b>הזמנה חדשה #${order.orderNo}</b>\nפתח את המחסן כדי לקבל ולאשר.`, true);
     }
     res.json({ ok: true, order });
   } catch (e) { res.json({ ok: false, error: String(e) }); }
 });
 
+// מחסן: "קיבלתי"
+app.post("/api/orders/receive", async (req, res) => {
+  try {
+    const a = await auth(req);
+    if (!a || a.role !== "warehouse") return res.json({ ok: false, error: "unauthorized" });
+    const order = await gas("receiveOrder", { orderNo: req.body.orderNo, receivedBy: a.user.first_name || "" });
+    const cfg = await gas("getConfig");
+    if (cfg.managerChatId) {
+      await sendLion(cfg.managerChatId, LION_URL.wink(),
+        `📥 <b>הזמנה #${order.orderNo} התקבלה</b> במחסן ובטיפול.`, false);
+    }
+    res.json({ ok: true, order });
+  } catch (e) { res.json({ ok: false, error: String(e) }); }
+});
+
+// מחסן: תיקון כמות/משקל בעת חוסר
+app.post("/api/orders/setqty", async (req, res) => {
+  try {
+    const a = await auth(req);
+    if (!a || a.role !== "warehouse") return res.json({ ok: false, error: "unauthorized" });
+    const order = await gas("setOrderQty", { orderNo: req.body.orderNo, fields: req.body.fields || {} });
+    const cfg = await gas("getConfig");
+    if (cfg.managerChatId) {
+      await sendLion(cfg.managerChatId, LION_URL.wink(),
+        `✏️ <b>הזמנה #${order.orderNo} עודכנה ע״י המחסן</b>\nכמות: ${order.qty} · משקל: ${order.drawWeight || "—"} גרם`, false);
+    }
+    res.json({ ok: true, order });
+  } catch (e) { res.json({ ok: false, error: String(e) }); }
+});
+
+// מחסן: אישור סופי — מוריד מלאי
 app.post("/api/orders/confirm", async (req, res) => {
   try {
     const a = await auth(req);
