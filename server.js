@@ -196,6 +196,21 @@ app.post("/api/orders/confirm", async (req, res) => {
   } catch (e) { res.json({ ok: false, error: String(e) }); }
 });
 
+// מחסן: "נאסף" — ההזמנה יצאה בפועל
+app.post("/api/orders/collect", async (req, res) => {
+  try {
+    const a = await auth(req);
+    if (!a || a.role !== "warehouse") return res.json({ ok: false, error: "unauthorized" });
+    const order = await gas("collectOrder", { orderNo: req.body.orderNo, collectedBy: a.user.first_name || "" });
+    const cfg = await gas("getConfig");
+    if (cfg.managerChatId) {
+      await sendLion(cfg.managerChatId, LION_URL.grin(),
+        `📤 <b>הזמנה #${order.orderNo} נאספה</b> ויצאה מהמחסן.`, false);
+    }
+    res.json({ ok: true, order });
+  } catch (e) { res.json({ ok: false, error: String(e) }); }
+});
+
 app.post("/api/orders/edit", async (req, res) => {
   try {
     const a = await auth(req);
@@ -234,6 +249,8 @@ app.post("/tg/:secret", async (req, res) => {
     const text = msg.text.trim();
     const cfg = await gas("getConfig");
     const isManager = String(cfg.managerChatId) === String(chatId);
+    const isWarehouse = String(cfg.warehouseChatId) === String(chatId);
+    const known = isManager || isWarehouse;
 
     if (text.startsWith("/start")) {
       await sendLion(chatId, LION_URL.neutral(),
@@ -264,6 +281,12 @@ app.post("/tg/:secret", async (req, res) => {
 
     } else if (text.startsWith("/whoami")) {
       await tg("sendMessage", { chat_id: chatId, text: `chat id: ${chatId}` });
+
+    } else if (text.startsWith("/מלאי") || text.startsWith("/stock")) {
+      if (!known) { await tg("sendMessage", { chat_id: chatId, text: "❌ אין הרשאה." }); return; }
+      const inv = await gas("getInventory");
+      const lines = (inv || []).map(it => `${it.product} · ${Number(it.grams).toLocaleString()} גרם`).join("\n");
+      await tg("sendMessage", { chat_id: chatId, text: `📦 מלאי נוכחי\n\n${lines || "—"}` });
 
     } else {
       await tg("sendMessage", { chat_id: chatId, text: "לפתיחת המחסן 👇", reply_markup: appButton("🦁 פתח מחסן") });
