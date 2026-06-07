@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Package, Gift, Send, Pencil, Check, ChevronRight, ScrollText,
-  Scale, Bell, Plus, Minus, RotateCcw, Sparkles, Loader2, PackagePlus, Boxes
+  Scale, Bell, Plus, Minus, RotateCcw, Sparkles, Loader2, PackagePlus, Boxes, PackageCheck
 } from "lucide-react";
 
 /* ============================================================
@@ -179,12 +179,14 @@ const Receipt = ({ o }) => {
         </div>
 
         <div className="mt-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold"
-             style={{ color: o.status === "ready" ? "#1c9a55" : o.status === "received" ? "#2563c9" : "#b07a14" }}>
-          {o.status === "ready"
-            ? <><Check size={13} /> מוכן לאיסוף ✓</>
-            : o.status === "received"
-              ? <><Check size={12} /> התקבל — בטיפול</>
-              : <><Bell size={12} /> ממתין לקבלה</>}
+             style={{ color: o.status === "collected" ? "rgba(255,255,255,.45)" : o.status === "ready" ? "#1c9a55" : o.status === "received" ? "#2563c9" : "#b07a14" }}>
+          {o.status === "collected"
+            ? <><Check size={12} /> נאסף ✓</>
+            : o.status === "ready"
+              ? <><Check size={13} /> מוכן לאיסוף ✓</>
+              : o.status === "received"
+                ? <><Check size={12} /> התקבל — בטיפול</>
+                : <><Bell size={12} /> ממתין לקבלה</>}
         </div>
       </div>
       <div className="scallop scallop-b" />
@@ -583,6 +585,13 @@ function Warehouse({ name, fire, toast }) {
   const [busyNo, setBusyNo] = useState(null);
   const [editNo, setEditNo] = useState(null);
   const [editFields, setEditFields] = useState({ qty: 0, drawWeight: 0 });
+  const [stock, setStock] = useState(null); // null=hidden, []=loading→list
+
+  const loadStock = async () => {
+    setStock("loading");
+    const res = await api("/inventory", {});
+    setStock(res.ok ? res.inventory : []);
+  };
 
   const load = useCallback(async () => {
     const res = await api("/orders/list", {});
@@ -610,6 +619,14 @@ function Warehouse({ name, fire, toast }) {
     else fire("שגיאה");
   };
 
+  const collect = async (no) => {
+    setBusyNo(no);
+    const res = await api("/orders/collect", { orderNo: no });
+    setBusyNo(null);
+    if (res.ok) { fire("נאסף 📤"); tg?.HapticFeedback?.notificationOccurred?.("success"); load(); }
+    else fire("שגיאה");
+  };
+
   const openEdit = (o) => { setEditNo(o.orderNo); setEditFields({ qty: Number(o.qty) || 0, drawWeight: Number(o.drawWeight) || 0 }); };
   const saveEdit = async (no) => {
     setBusyNo(no);
@@ -622,6 +639,7 @@ function Warehouse({ name, fire, toast }) {
   const pending  = (orders || []).filter((o) => o.status === "sent");
   const received = (orders || []).filter((o) => o.status === "received");
   const ready    = (orders || []).filter((o) => o.status === "ready");
+  const collected = (orders || []).filter((o) => o.status === "collected");
 
   const editBox = (o) => (
     <div dir="rtl" className="msgIn rounded-xl p-3 space-y-3" style={{ background: "rgba(255,176,32,.08)", border: "1px solid rgba(255,176,32,.25)" }}>
@@ -648,13 +666,40 @@ function Warehouse({ name, fire, toast }) {
   return (
     <Shell>
       <Toast msg={toast} />
-      <Header title="מחסן" right={<button onClick={load} className="press flex items-center gap-1.5 px-3 py-2 rounded-full text-white/70 text-[12px] font-semibold" style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.08)" }}><RotateCcw size={14} /> רענן</button>} />
+      <Header title="מחסן" right={<div className="flex gap-2">
+        <button onClick={loadStock} className="press flex items-center gap-1.5 px-3 py-2 rounded-full text-white/70 text-[12px] font-semibold" style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.08)" }}><Boxes size={14} /> מלאי</button>
+        <button onClick={load} className="press flex items-center gap-1.5 px-3 py-2 rounded-full text-white/70 text-[12px] font-semibold" style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.08)" }}><RotateCcw size={14} /> רענן</button>
+      </div>} />
+
+      {stock !== null && (
+        <div dir="rtl" className="msgIn mb-4 rounded-2xl p-4" style={{ background: "rgba(255,176,32,.07)", border: "1px solid rgba(255,176,32,.22)" }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-white font-extrabold text-[14px] disp flex items-center gap-1.5"><Boxes size={16} className="text-[#FFB020]" /> מלאי נוכחי</div>
+            <button onClick={() => setStock(null)} className="press text-white/45 text-[12px] font-semibold">סגור ✕</button>
+          </div>
+          {stock === "loading" ? (
+            <div className="py-4 flex justify-center"><Loader2 size={22} className="spin text-[#FFB020]" /></div>
+          ) : stock.length === 0 ? (
+            <div className="text-white/45 text-[13px]">אין נתוני מלאי.</div>
+          ) : (
+            <div className="space-y-1.5">
+              {stock.map((it) => (
+                <div key={it.product} className="flex items-center gap-3 px-3 py-2 rounded-xl" style={{ background: "rgba(255,255,255,.05)" }}>
+                  <div className="w-7 h-7 rounded-lg grid place-items-center font-black text-[#231505] text-[13px] disp" style={{ background: "linear-gradient(145deg,#FFB020,#FF7A18)" }}>{it.product}</div>
+                  <div className="flex-1 text-white/80 text-[13px] font-semibold">מוצר {it.product}</div>
+                  <div className="mono text-white font-bold text-[14px]">{Number(it.grams).toLocaleString()} <span className="text-white/40 text-[11px]">g</span></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {orders === null && (
         <div className="h-[60vh] flex items-center justify-center"><Loader2 size={30} className="spin text-[#FFB020]" /></div>
       )}
 
-      {orders !== null && pending.length === 0 && received.length === 0 && ready.length === 0 && (
+      {orders !== null && pending.length === 0 && received.length === 0 && ready.length === 0 && collected.length === 0 && (
         <div className="h-[60vh] flex flex-col items-center justify-center text-center gap-3" dir="rtl">
           <Lion src={LION.celebrate} size={150} />
           <div className="text-white/45 text-[14px] font-semibold">אין הזמנות</div>
@@ -705,16 +750,38 @@ function Warehouse({ name, fire, toast }) {
         </div>
       )}
 
-      {/* מוכנות */}
+      {/* מוכנות לאיסוף — כפתור "נאסף" */}
       {ready.length > 0 && (
-        <div className="space-y-3 mt-6">
-          <div className="text-white/40 text-[12px] font-bold" dir="rtl">מוכנות ({ready.length})</div>
+        <div className="space-y-4 mt-6">
+          <div className="text-white/55 text-[13px] font-bold flex items-center gap-1.5" dir="rtl"><Check size={14} className="text-[#34d27b]" /> מוכנות לאיסוף ({ready.length})</div>
           {ready.map((o) => (
-            <div key={o.orderNo} dir="rtl" className="flex items-center gap-3 px-4 py-3 rounded-2xl"
+            <div key={o.orderNo} dir="rtl" className="rounded-2xl p-3 space-y-2"
                  style={{ background: "rgba(52,210,123,.07)", border: "1px solid rgba(52,210,123,.2)" }}>
-              <Check size={18} className="text-[#34d27b]" />
-              <div className="flex-1 text-white text-[14px] font-semibold">בון #{o.no} · {o.type === "pack" ? o.product : "משיכה"}</div>
-              <span className="text-[#34d27b] text-[12px] font-bold">מוכן</span>
+              <div className="flex items-center gap-3">
+                <Check size={18} className="text-[#34d27b]" />
+                <div className="flex-1 text-white text-[14px] font-semibold">בון #{o.no} · {o.type === "pack" ? o.product : "משיכה"}</div>
+                <span className="text-[#34d27b] text-[12px] font-bold">מוכן</span>
+              </div>
+              <button disabled={busyNo === o.orderNo} onClick={() => collect(o.orderNo)}
+                className="press w-full py-2.5 rounded-xl font-extrabold text-[14px] disp flex items-center justify-center gap-2"
+                style={{ background: "linear-gradient(145deg,#FFB020,#FF7A18)", color: "#231505" }}>
+                {busyNo === o.orderNo ? <Loader2 size={15} className="spin" /> : <PackageCheck size={16} />} נאסף
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* נאספו — סופי */}
+      {collected.length > 0 && (
+        <div className="space-y-2 mt-6">
+          <div className="text-white/40 text-[12px] font-bold" dir="rtl">נאספו ({collected.length})</div>
+          {collected.map((o) => (
+            <div key={o.orderNo} dir="rtl" className="flex items-center gap-3 px-4 py-2.5 rounded-2xl opacity-60"
+                 style={{ background: "rgba(255,255,255,.04)", border: "1px solid var(--line, rgba(255,255,255,.08))" }}>
+              <PackageCheck size={16} className="text-white/40" />
+              <div className="flex-1 text-white/70 text-[13px] font-semibold">בון #{o.no} · {o.type === "pack" ? o.product : "משיכה"}</div>
+              <span className="text-white/35 text-[11px] font-bold">נאסף</span>
             </div>
           ))}
         </div>
