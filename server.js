@@ -63,7 +63,41 @@ async function sendLion(chatId, photoUrl, caption, withButton) {
   return r;
 }
 
-/* ---------- אימות initData של טלגרם ---------- */
+const STATUS_HE = {
+  sent: "⏳ ממתין לקבלה",
+  received: "📥 התקבל — בטיפול",
+  ready: "✅ מוכן לאיסוף",
+  collected: "📤 נאסף",
+};
+function fmtDT(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function orderSummary(o) {
+  const L = [];
+  const no = String(o.orderNo).padStart(4, "0");
+  L.push(`🧾 <b>בון ${o.type === "pack" ? "אריזה" : "משיכה"} #${no}</b>`);
+  L.push(`סטטוס: ${STATUS_HE[o.status] || o.status}`);
+  L.push("");
+  if (o.type === "pack") {
+    L.push(`מוצר: ${o.product}`);
+    L.push(`כמות: ${o.qty} יח׳`);
+    L.push(`אריזות למילוי: ${o.packages}`);
+    L.push(`סוג אריזה: ${o.packType}`);
+    if (o.packWeight) L.push(`משקל אריזה: ${o.packWeight} גרם`);
+    if (o.drawWeight) L.push(`משקל סחורה: ${o.drawWeight} גרם`);
+  } else {
+    L.push(`פירוט: ${o.freeText || "—"}`);
+  }
+  L.push("");
+  if (o.createdBy) L.push(`נוצר: ${o.createdBy} · ${fmtDT(o.createdAt)}`);
+  if (o.receivedBy) L.push(`התקבל: ${o.receivedBy} · ${fmtDT(o.receivedAt)}`);
+  if (o.confirmedBy) L.push(`אושר: ${o.confirmedBy} · ${fmtDT(o.confirmedAt)}`);
+  if (o.collectedBy) L.push(`נאסף: ${o.collectedBy} · ${fmtDT(o.collectedAt)}`);
+  return L.join("\n");
+}
 function checkInitData(initData) {
   if (!initData || !BOT_TOKEN) return null;
   const params = new URLSearchParams(initData);
@@ -287,6 +321,15 @@ app.post("/tg/:secret", async (req, res) => {
       const inv = await gas("getInventory");
       const lines = (inv || []).map(it => `${it.product} · ${Number(it.grams).toLocaleString()} גרם`).join("\n");
       await tg("sendMessage", { chat_id: chatId, text: `📦 מלאי נוכחי\n\n${lines || "—"}` });
+
+    } else if (text.startsWith("/הזמנה") || text.startsWith("/order")) {
+      if (!known) { await tg("sendMessage", { chat_id: chatId, text: "❌ אין הרשאה." }); return; }
+      const m = text.match(/\d+/);
+      if (!m) { await tg("sendMessage", { chat_id: chatId, text: "שימוש: /הזמנה 42" }); return; }
+      const no = m[0];
+      const o = await gas("getOrder", { orderNo: no });
+      if (!o) { await tg("sendMessage", { chat_id: chatId, text: `לא נמצאה הזמנה #${no}` }); return; }
+      await tg("sendMessage", { chat_id: chatId, text: orderSummary(o), parse_mode: "HTML" });
 
     } else {
       await tg("sendMessage", { chat_id: chatId, text: "לפתיחת המחסן 👇", reply_markup: appButton("🦁 פתח מחסן") });
